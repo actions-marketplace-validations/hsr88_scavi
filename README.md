@@ -43,7 +43,7 @@ scavi check ./my-project
 
 ## Demo
 
-The repository includes a deliberately outdated example that is safe to copy and modify while recording:
+See Scavi detect inconsistent repository context and preview deterministic fixes:
 
 <p align="center">
   <a href="docs/assets/scavi-demo.mp4">
@@ -69,16 +69,6 @@ The repository includes a deliberately outdated example that is safe to copy and
 <img src="docs/assets/scavi-after-fix.png" width="700" alt="Scavi leaves an unresolved stale path and missing script after safe fixes">
 
 </details>
-
-```powershell
-Copy-Item -Recurse examples/demo-repo .scavi-demo
-npx scavi-cli check .scavi-demo --color
-npx scavi-cli fix .scavi-demo --color
-```
-
-See the complete [recording and screenshot guide](docs/DEMO.md) for the expected findings, suggested shot list, and cleanup command.
-
-Terminal colors are automatic. Use `--color` to force them for a recording or `--no-color` to produce plain text; JSON output is always unstyled.
 
 ---
 
