@@ -12,6 +12,31 @@ Think of it as a linter for the context you give your coding agents.
 
 ---
 
+## Installation
+
+Run Scavi directly in the repository you want to check:
+
+```bash
+cd path/to/your-repository
+npx scavi-cli check
+```
+
+Or install it globally:
+
+```bash
+npm install --global scavi-cli
+cd path/to/your-repository
+scavi check
+```
+
+Scavi looks for context files in the repository being checked. If you run it from a directory without files such as `AGENTS.md`, `CLAUDE.md`, Copilot instructions, or Cursor rules, it will report `None found`. You can also pass the repository path explicitly:
+
+```bash
+scavi check ./my-project
+```
+
+---
+
 ## The problem
 
 AI coding agents are becoming part of everyday development workflows.
