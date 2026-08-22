@@ -63,7 +63,7 @@ And now every AI agent working on the repository starts with bad context.
 Scavi digs through your repository and checks whether your AI coding context still matches reality.
 
 ```bash
-npx scavi check
+npx scavi-cli check
 ```
 
 Example:
@@ -191,7 +191,7 @@ Semantic verification is opt-in. Scavi first indexes text files locally, retriev
 Scavi is designed to help fix context drift, not only complain about it.
 
 ```bash
-npx scavi fix
+npx scavi-cli fix
 ```
 
 Scavi will generate minimal suggested changes for detected issues.
@@ -325,7 +325,7 @@ The Ollama adapter uses its local `/api/chat` endpoint with streaming disabled, 
 Or without installing globally:
 
 ```bash
-npx scavi check
+npx scavi-cli check
 ```
 
 ---

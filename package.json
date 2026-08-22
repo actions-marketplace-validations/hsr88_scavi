@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc -b && pnpm build:cli && pnpm build:action",
-    "build:cli": "pnpm --filter scavi bundle",
+    "build:cli": "pnpm --filter scavi-cli bundle",
     "build:action": "pnpm --filter @scavi/github-action bundle",
     "check": "pnpm build && node packages/cli/dist/index.js check",
     "test": "vitest run",

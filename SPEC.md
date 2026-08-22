@@ -94,7 +94,7 @@ scavi fix
 Running without global installation should also work:
 
 ```bash
-npx scavi check
+npx scavi-cli check
 ```
 
 ---

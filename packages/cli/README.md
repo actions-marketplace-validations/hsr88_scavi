@@ -5,7 +5,7 @@ The context linter for AI coding agents.
 Scavi checks whether repository instructions such as `AGENTS.md`, `CLAUDE.md`, Copilot instructions, and Cursor rules still match the codebase.
 
 ```bash
-npx scavi check
+npx scavi-cli check
 ```
 
 Available commands:
