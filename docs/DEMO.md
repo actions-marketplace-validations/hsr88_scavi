@@ -27,7 +27,7 @@ The files intentionally claim that the repository uses an old directory, npm/yar
 ### 2. Run the public npm package
 
 ```powershell
-npx scavi-cli check
+npx scavi-cli check --color
 ```
 
 Scavi should report:
@@ -41,7 +41,7 @@ Scavi should report:
 ### 3. Preview and apply safe fixes
 
 ```powershell
-npx scavi-cli fix
+npx scavi-cli fix --color
 ```
 
 Press `y` when prompted. Scavi changes only deterministic, evidence-backed values such as the package manager and React major version. The missing path and absent script remain for a human to resolve.

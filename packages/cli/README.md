@@ -31,8 +31,12 @@ Available commands:
 scavi init
 scavi check
 scavi check --format json
+scavi check --color
+scavi check --no-color
 scavi fix
 ```
+
+Colors are enabled automatically in compatible interactive terminals. Use `--color` for recordings or `--no-color` for plain text. JSON output never contains ANSI styling, and the `NO_COLOR` environment variable is respected.
 
 Deterministic checks are local and require no API key. Optional semantic verification supports OpenAI and local Ollama providers and is disabled by default.
 

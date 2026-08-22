@@ -47,11 +47,13 @@ The repository includes a deliberately outdated example that is safe to copy and
 
 ```powershell
 Copy-Item -Recurse examples/demo-repo .scavi-demo
-npx scavi-cli check .scavi-demo
-npx scavi-cli fix .scavi-demo
+npx scavi-cli check .scavi-demo --color
+npx scavi-cli fix .scavi-demo --color
 ```
 
 See the complete [recording and screenshot guide](docs/DEMO.md) for the expected findings, suggested shot list, and cleanup command.
+
+Terminal colors are automatic. Use `--color` to force them for a recording or `--no-color` to produce plain text; JSON output is always unstyled.
 
 ---
 
