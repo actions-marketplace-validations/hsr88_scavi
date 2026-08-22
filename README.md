@@ -1,4 +1,8 @@
-# 🦝 Scavi
+<p align="center">
+  <img src="docs/assets/scavi-numbat.png" width="360" alt="Scavi numbat mascot inspecting repository context">
+</p>
+
+# Scavi
 
 ### The context linter for AI coding agents.
 
@@ -34,6 +38,20 @@ Scavi looks for context files in the repository being checked. If you run it fro
 ```bash
 scavi check ./my-project
 ```
+
+---
+
+## Demo
+
+The repository includes a deliberately outdated example that is safe to copy and modify while recording:
+
+```powershell
+Copy-Item -Recurse examples/demo-repo .scavi-demo
+npx scavi-cli check .scavi-demo
+npx scavi-cli fix .scavi-demo
+```
+
+See the complete [recording and screenshot guide](docs/DEMO.md) for the expected findings, suggested shot list, and cleanup command.
 
 ---
 
@@ -94,7 +112,7 @@ npx scavi-cli check
 Example:
 
 ```text
-🦝 Scavi is digging through your repo...
+🐾 Scavi is digging through your repo...
 
 AI Context Health: 72/100
 
@@ -244,7 +262,7 @@ steps:
 A pull request that changes application behavior could produce a check like:
 
 ```text
-🦝 Scavi — AI Context Check
+🐾 Scavi — AI Context Check
 
 2 potential context issues found.
 
@@ -418,7 +436,7 @@ Scavi aims to make AI context a maintainable part of the software development li
 
 ## Roadmap
 
-### v0.1 — Digging begins 🦝
+### v0.1 — Digging begins 🐾
 
 * [x] CLI foundation
 * [x] Context file discovery
@@ -507,7 +525,7 @@ MIT
 ---
 
 <p align="center">
-  <strong>🦝 Scavi</strong><br>
+  <strong>🐾 Scavi</strong><br>
   The context linter for AI coding agents.<br>
   <em>Keep your agents in sync with your code.</em>
 </p>

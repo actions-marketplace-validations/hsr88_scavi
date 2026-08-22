@@ -1,0 +1,12 @@
+{
+  "name": "scavi-demo-repo",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "build": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "react": "^19.2.0"
+  }
+}

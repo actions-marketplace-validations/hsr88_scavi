@@ -5,6 +5,7 @@ packages/github-action/dist/*
 !packages/github-action/dist/index.cjs
 *.tsbuildinfo
 .scavi/cache/
+.scavi-demo/
 coverage/
 work/
 dist-types/
