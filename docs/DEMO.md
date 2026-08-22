@@ -72,7 +72,7 @@ docs/assets/scavi-json.png
 docs/assets/scavi-demo.gif
 ```
 
-Once the files exist, they can be embedded in the main README under the Demo section.
+The current demo assets are embedded in the main README. Replace them using the same filenames when recording an updated version.
 
 ## Reset or clean up
 

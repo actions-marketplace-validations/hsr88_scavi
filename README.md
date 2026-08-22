@@ -45,6 +45,31 @@ scavi check ./my-project
 
 The repository includes a deliberately outdated example that is safe to copy and modify while recording:
 
+<p align="center">
+  <a href="docs/assets/scavi-demo.mp4">
+    <img src="docs/assets/scavi-demo.gif" width="700" alt="Scavi checking stale AI agent context and previewing deterministic fixes">
+  </a>
+</p>
+
+<p align="center"><sub>Click the demo to open the full-quality MP4.</sub></p>
+
+<details>
+<summary><strong>View terminal screenshots</strong></summary>
+
+### Detect stale context
+
+<img src="docs/assets/scavi-check.png" width="700" alt="Scavi reports package manager conflicts and a stale frontend path">
+
+### Preview deterministic fixes
+
+<img src="docs/assets/scavi-fix.png" width="700" alt="Scavi previews deterministic edits before applying them">
+
+### Keep uncertain problems for a human
+
+<img src="docs/assets/scavi-after-fix.png" width="700" alt="Scavi leaves an unresolved stale path and missing script after safe fixes">
+
+</details>
+
 ```powershell
 Copy-Item -Recurse examples/demo-repo .scavi-demo
 npx scavi-cli check .scavi-demo --color
