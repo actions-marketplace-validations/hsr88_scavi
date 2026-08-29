@@ -19369,6 +19369,16 @@ function parseResult(value) {
     throw new Error("Semantic provider returned no reason");
   return { verdict: candidate.verdict, confidence: candidate.confidence, reason: candidate.reason };
 }
+async function responseError(response, provider) {
+  let detail = "";
+  try {
+    const payload = await response.json();
+    if (typeof payload.error?.message === "string")
+      detail = payload.error.message.trim().slice(0, 500);
+  } catch {
+  }
+  return new Error(`${provider} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+}
 var OpenAIResponsesProvider = class {
   name = "openai";
   #apiKey;
@@ -19398,7 +19408,7 @@ var OpenAIResponsesProvider = class {
       })
     });
     if (!response.ok)
-      throw new Error(`OpenAI Responses API failed with HTTP ${response.status}`);
+      throw await responseError(response, "OpenAI Responses API");
     const payload = await response.json();
     const text = payload.output_text ?? payload.output?.flatMap((item) => item.content ?? []).find((item) => item.type === "output_text")?.text;
     if (!text)
@@ -19427,7 +19437,7 @@ var OllamaProvider = class {
 Return JSON matching this schema: ${JSON.stringify(VERDICT_SCHEMA)}` }], format: VERDICT_SCHEMA, options: { temperature: 0 } })
     });
     if (!response.ok)
-      throw new Error(`Ollama API failed with HTTP ${response.status}`);
+      throw await responseError(response, "Ollama API");
     const payload = await response.json();
     if (!payload.message?.content)
       throw new Error("Ollama API returned no message content");

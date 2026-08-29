@@ -27,6 +27,15 @@ function parseResult(value: unknown): SemanticResult {
   return { verdict: candidate.verdict as SemanticVerdict, confidence: candidate.confidence, reason: candidate.reason };
 }
 
+async function responseError(response: Response, provider: string): Promise<Error> {
+  let detail = "";
+  try {
+    const payload = await response.json() as { error?: { message?: unknown } };
+    if (typeof payload.error?.message === "string") detail = payload.error.message.trim().slice(0, 500);
+  } catch { /* provider did not return a JSON error body */ }
+  return new Error(`${provider} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+}
+
 export class OpenAIResponsesProvider implements SemanticProvider {
   readonly name = "openai";
   readonly #apiKey: string;
@@ -55,7 +64,7 @@ export class OpenAIResponsesProvider implements SemanticProvider {
         text: { format: { type: "json_schema", name: "semantic_verdict", strict: true, schema: VERDICT_SCHEMA } },
       }),
     });
-    if (!response.ok) throw new Error(`OpenAI Responses API failed with HTTP ${response.status}`);
+    if (!response.ok) throw await responseError(response, "OpenAI Responses API");
     const payload = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
     const text = payload.output_text ?? payload.output?.flatMap((item) => item.content ?? []).find((item) => item.type === "output_text")?.text;
     if (!text) throw new Error("OpenAI Responses API returned no output text");
@@ -82,7 +91,7 @@ export class OllamaProvider implements SemanticProvider {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: this.#model, stream: false, messages: [{ role: "system", content: SYSTEM_INSTRUCTIONS }, { role: "user", content: `${providerInput(request)}\n\nReturn JSON matching this schema: ${JSON.stringify(VERDICT_SCHEMA)}` }], format: VERDICT_SCHEMA, options: { temperature: 0 } }),
     });
-    if (!response.ok) throw new Error(`Ollama API failed with HTTP ${response.status}`);
+    if (!response.ok) throw await responseError(response, "Ollama API");
     const payload = await response.json() as { message?: { content?: string } };
     if (!payload.message?.content) throw new Error("Ollama API returned no message content");
     return parseResult(JSON.parse(payload.message.content));

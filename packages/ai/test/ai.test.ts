@@ -20,6 +20,12 @@ describe("OpenAIResponsesProvider", () => {
     const provider = new OpenAIResponsesProvider({ apiKey: "test-key", model: "test-model", fetcher: fetcher as typeof fetch });
     await expect(provider.verify({ claim: "claim", evidence: [] })).rejects.toThrow("invalid verdict");
   });
+
+  it("includes the provider error message without exposing request credentials", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ error: { message: "Project quota exceeded." } }), { status: 429 }));
+    const provider = new OpenAIResponsesProvider({ apiKey: "secret-test-key", model: "test-model", fetcher: fetcher as typeof fetch });
+    await expect(provider.verify({ claim: "claim", evidence: [] })).rejects.toThrow("HTTP 429: Project quota exceeded.");
+  });
 });
 
 describe("OllamaProvider", () => {
