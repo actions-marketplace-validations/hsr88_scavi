@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { PackageManager, ParsedContext, SourceLocation } from "@scavi/parser";
 
@@ -7,23 +7,47 @@ export interface Evidence { description: string; file?: string }
 export interface ScaviEdit { file: string; start: number; end: number; replacement: string; expected: string }
 export interface ScaviFix { description: string; edits: ScaviEdit[]; generatedBy: "deterministic" | "ai"; confidence?: number }
 export interface ScaviIssue { id: string; rule: string; severity: Severity; source: SourceLocation; message: string; claim?: string; evidence: Evidence[]; confidence?: number; fix?: ScaviFix }
-export interface RepositoryFacts { root: string; packageManager?: PackageManager; packageManagerEvidence: Evidence[]; scripts: Set<string>; dependencies: Record<string, string> }
+export interface RepositoryFacts { root: string; packageManager?: PackageManager; packageManagerEvidence: Evidence[]; scripts: Set<string>; dependencies: Record<string, string>; repositoryPaths: Set<string> }
 const LOCKFILES: Array<[string, PackageManager]> = [["pnpm-lock.yaml", "pnpm"], ["package-lock.json", "npm"], ["yarn.lock", "yarn"], ["bun.lock", "bun"], ["bun.lockb", "bun"]];
+const EXCLUDED_DIRECTORIES = new Set([".git", ".scavi", "node_modules", "dist", "coverage", "target", ".next"]);
+const UNSUPPORTED_RUNTIME_CLAIMS = new Set(["python", "rust", "go", "java", "ruby", "php"]);
 async function exists(file: string): Promise<boolean> { try { await lstat(file); return true } catch { return false } }
+
+async function repositoryFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory() && EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (absolute !== root && await exists(path.join(absolute, ".git"))) continue;
+        await walk(absolute);
+      }
+      else if (entry.isFile()) files.push(path.relative(root, absolute).split(path.sep).join("/"));
+    }
+  }
+  await walk(root);
+  return files.sort();
+}
 
 export async function collectRepositoryFacts(root: string): Promise<RepositoryFacts> {
   const evidence: Evidence[] = [], detected = new Set<PackageManager>(), scripts = new Set<string>(), dependencies: Record<string, string> = {};
+  const files = await repositoryFiles(root), repositoryPaths = new Set(files);
+  for (const file of files) {
+    const segments = file.split("/");
+    for (let index = 1; index < segments.length; index += 1) repositoryPaths.add(segments.slice(0, index).join("/"));
+  }
   let manifestManager: PackageManager | undefined;
-  try {
-    const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { packageManager?: string; scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string>; peerDependencies?: Record<string, string>; optionalDependencies?: Record<string, string>; engines?: { node?: string } };
+  for (const manifestPath of files.filter((file) => path.posix.basename(file) === "package.json")) try {
+    const manifest = JSON.parse(await readFile(path.join(root, manifestPath), "utf8")) as { packageManager?: string; scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string>; peerDependencies?: Record<string, string>; optionalDependencies?: Record<string, string>; engines?: { node?: string } };
     Object.keys(manifest.scripts ?? {}).forEach((script) => scripts.add(script));
     Object.assign(dependencies, manifest.dependencies, manifest.devDependencies, manifest.peerDependencies, manifest.optionalDependencies);
     if (manifest.engines?.node) dependencies.node = manifest.engines.node;
-    const match = manifest.packageManager?.match(/^(npm|pnpm|yarn|bun)@/);
+    const match = manifestPath === "package.json" ? manifest.packageManager?.match(/^(npm|pnpm|yarn|bun)@/) : undefined;
     if (match) { manifestManager = match[1] as PackageManager; detected.add(manifestManager); evidence.push({ file: "package.json", description: `packageManager: ${manifest.packageManager}` }) }
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Invalid package.json", { cause: error }) }
+  } catch (error) { throw new Error(`Invalid ${manifestPath}`, { cause: error }) }
   for (const [lockfile, manager] of LOCKFILES) if (await exists(path.join(root, lockfile))) { detected.add(manager); evidence.push({ file: lockfile, description: `${lockfile} exists` }) }
-  return { root, packageManager: detected.size === 1 ? [...detected][0] : manifestManager, packageManagerEvidence: evidence, scripts, dependencies };
+  return { root, packageManager: detected.size === 1 ? [...detected][0] : manifestManager, packageManagerEvidence: evidence, scripts, dependencies, repositoryPaths };
 }
 
 function resolveClaimPath(root: string, value: string): string | undefined {
@@ -35,6 +59,22 @@ function resolveClaimPath(root: string, value: string): string | undefined {
 }
 async function presentInside(root: string, candidate: string): Promise<boolean> {
   try { const relation = path.relative(await realpath(root), await realpath(candidate)); return !relation.startsWith("..") && !path.isAbsolute(relation) } catch { return false }
+}
+
+function segmentBase(value: string): string { return value.replace(/\.[^.]+$/, "").toLowerCase() }
+
+function repositoryContainsReference(paths: Set<string>, value: string): boolean {
+  const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\//, "").replace(/\/$/, "");
+  if (!normalized) return false;
+  if (paths.has(normalized) || paths.has(`${normalized}.json`)) return true;
+  const expected = normalized.toLowerCase().split("/").filter(Boolean).map(segmentBase);
+  for (const candidate of paths) {
+    const actual = candidate.toLowerCase().split("/").filter(Boolean).map(segmentBase);
+    let matched = 0;
+    for (const segment of actual) if (segment === expected[matched]) matched += 1;
+    if (matched === expected.length) return true;
+  }
+  return false;
 }
 
 function sourceOffset(content: string, source: SourceLocation): number | undefined {
@@ -51,7 +91,7 @@ export async function runDeterministicRules(contexts: ParsedContext[], facts: Re
   for (const context of contexts) {
     for (const claim of context.paths) {
       const candidate = resolveClaimPath(facts.root, claim.value);
-      if (!candidate || !(await presentInside(facts.root, candidate))) {
+      if ((!candidate || !(await presentInside(facts.root, candidate))) && !repositoryContainsReference(facts.repositoryPaths, claim.value)) {
         const basename = path.posix.basename(claim.value);
         const fileLike = basename.startsWith(".") || path.posix.extname(basename) !== "";
         issues.push({ id: fileLike ? "MISSING_REFERENCED_FILE" : "STALE_PATH", rule: fileLike ? "referenced-file" : "valid-path", severity: "error", source: claim.source, message: `${fileLike ? "Referenced file" : "Referenced path"} does not exist: ${claim.value}`, claim: claim.text, evidence: [{ description: candidate ? `${claim.value} was not found inside the repository` : `${claim.value} escapes the repository root` }] });
@@ -66,6 +106,7 @@ export async function runDeterministicRules(contexts: ParsedContext[], facts: Re
         fix: start === undefined ? undefined : { description: `Replace ${claim.manager} with ${facts.packageManager}`, generatedBy: "deterministic", edits: [{ file: claim.source.file, start, end: start + claim.manager.length, replacement: facts.packageManager, expected: claim.manager }] } });
     }
     for (const claim of context.dependencies) {
+      if (UNSUPPORTED_RUNTIME_CLAIMS.has(claim.package)) continue;
       const declared = facts.dependencies[claim.package];
       if (!declared) {
         issues.push({ id: "MISSING_DEPENDENCY", rule: "dependency-version", severity: "error", source: claim.source, message: `${claim.package} ${claim.version} is named as a dependency, but it is not declared`, claim: claim.text, evidence: [{ file: "package.json", description: `${claim.package} is absent from dependencies, devDependencies, peerDependencies, and optionalDependencies` }] });

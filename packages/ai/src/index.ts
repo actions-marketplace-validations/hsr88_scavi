@@ -2,7 +2,8 @@ import type { RankedEvidence } from "@scavi/retrieval";
 
 export type SemanticVerdict = "consistent" | "stale" | "uncertain";
 export interface SemanticRequest { claim: string; evidence: RankedEvidence[] }
-export interface SemanticResult { verdict: SemanticVerdict; confidence: number; reason: string }
+export interface SemanticUsage { inputTokens: number; outputTokens: number; totalTokens: number }
+export interface SemanticResult { verdict: SemanticVerdict; confidence: number; reason: string; usage?: SemanticUsage }
 export interface SemanticProvider { readonly name: string; verify(request: SemanticRequest): Promise<SemanticResult> }
 
 export interface OpenAIResponsesOptions {
@@ -65,10 +66,12 @@ export class OpenAIResponsesProvider implements SemanticProvider {
       }),
     });
     if (!response.ok) throw await responseError(response, "OpenAI Responses API");
-    const payload = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
+    const payload = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number } };
     const text = payload.output_text ?? payload.output?.flatMap((item) => item.content ?? []).find((item) => item.type === "output_text")?.text;
     if (!text) throw new Error("OpenAI Responses API returned no output text");
-    return parseResult(JSON.parse(text));
+    const result = parseResult(JSON.parse(text));
+    const usage = payload.usage;
+    return usage ? { ...result, usage: { inputTokens: usage.input_tokens ?? 0, outputTokens: usage.output_tokens ?? 0, totalTokens: usage.total_tokens ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) } } : result;
   }
 }
 
@@ -92,8 +95,10 @@ export class OllamaProvider implements SemanticProvider {
       body: JSON.stringify({ model: this.#model, stream: false, messages: [{ role: "system", content: SYSTEM_INSTRUCTIONS }, { role: "user", content: `${providerInput(request)}\n\nReturn JSON matching this schema: ${JSON.stringify(VERDICT_SCHEMA)}` }], format: VERDICT_SCHEMA, options: { temperature: 0 } }),
     });
     if (!response.ok) throw await responseError(response, "Ollama API");
-    const payload = await response.json() as { message?: { content?: string } };
+    const payload = await response.json() as { message?: { content?: string }; prompt_eval_count?: number; eval_count?: number };
     if (!payload.message?.content) throw new Error("Ollama API returned no message content");
-    return parseResult(JSON.parse(payload.message.content));
+    const result = parseResult(JSON.parse(payload.message.content));
+    const inputTokens = payload.prompt_eval_count ?? 0, outputTokens = payload.eval_count ?? 0;
+    return inputTokens || outputTokens ? { ...result, usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens } } : result;
   }
 }

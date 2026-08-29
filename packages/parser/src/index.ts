@@ -80,6 +80,19 @@ function isPath(value: string): boolean {
   return value.startsWith("./") || value.startsWith("../") || value.startsWith("/") || /^[\w.-]+\/[\w./-]+$/.test(value) || /^\.?[\w-]+\.[a-z0-9]{1,8}$/i.test(value);
 }
 
+function isExternalSystemPath(value: string): boolean {
+  return /^\/(?:usr|opt|etc|var|tmp|home|Users|Applications|Library|System)\//.test(value) || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function isEndpointExample(value: string, line: string): boolean {
+  if (!/^(?:\/[\w.-]+|[\w.-]+\/[\w./<>-]+)$/.test(value)) return false;
+  return /\b(?:GET|POST|PUT|PATCH|DELETE|HTTP|RPC|endpoint|route|request|response|method|payload|mount)\b/i.test(line);
+}
+
+function isGenericFileSuffix(value: string): boolean {
+  return /^\.[^.]+\.[a-z0-9]{1,8}$/i.test(value) && value !== ".env.example";
+}
+
 function command(value: string): Omit<CommandClaim, "source" | "text"> | undefined {
   const match = value.trim().match(/^(npm|pnpm|yarn|bun)\s+(?:(run)\s+)?([\w:@./-]+)(?:\s+.*)?$/);
   if (!match) return;
@@ -106,7 +119,7 @@ export function parseContextFile(file: ContextFile): ParsedContext {
       const parsed = command(value);
       const claimSource = { ...source, column: (match.index ?? 0) + 2 };
       if (parsed) commands.push({ ...parsed, source: claimSource, text: line.trim() });
-      else if (isPath(value)) paths.push({ type: "path", value, source: claimSource, text: line.trim() });
+      else if (isPath(value) && !isExternalSystemPath(value) && !isEndpointExample(value, line) && !isGenericFileSuffix(value)) paths.push({ type: "path", value, source: claimSource, text: line.trim() });
     }
     if (inFence) {
       const parsed = command(line.trim());

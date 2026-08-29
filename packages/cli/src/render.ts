@@ -51,6 +51,17 @@ export function renderText(result: CheckResult, options: { color?: boolean } = {
       finding.evidence.forEach((item) => lines.push(`    ${palette.dim(`${item.file}:${item.startLine}-${item.endLine}`)}`));
     }
   }
+  if (result.semanticSummary?.enabled) {
+    const semantic = result.semanticSummary;
+    lines.push("", section("AI usage", palette));
+    if (semantic.cancelled) lines.push(`  ${palette.yellow("Cancelled before external analysis")}`);
+    else {
+      lines.push(`  Provider: ${semantic.provider ?? "not configured"}${semantic.model ? ` (${semantic.model})` : ""}`);
+      lines.push(`  ${semantic.providerCalls} provider ${semantic.providerCalls === 1 ? "call" : "calls"}  ${palette.dim("•")}  ${semantic.cacheHits} cache ${semantic.cacheHits === 1 ? "hit" : "hits"}  ${palette.dim("•")}  ${semantic.noEvidence} without evidence`);
+      if (semantic.skippedByLimit) lines.push(`  ${semantic.skippedByLimit} claims skipped by semanticMaxClaims`);
+      if (semantic.usage.totalTokens) lines.push(`  Tokens: ${semantic.usage.inputTokens} input + ${semantic.usage.outputTokens} output = ${semantic.usage.totalTokens} total`);
+    }
+  }
   return lines.join("\n");
 }
 

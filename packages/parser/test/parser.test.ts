@@ -32,6 +32,15 @@ describe("parseContextFile", () => {
       { manager: "pnpm", script: "test" },
     ]);
   });
+
+  it("ignores system executables, RPC examples, and generic file suffixes", () => {
+    const parsed = parseContextFile({
+      absolutePath: "/repo/AGENTS.md",
+      relativePath: "AGENTS.md",
+      content: "Use `/usr/bin/sandbox-exec`. Expose RPC methods like `thread/read`. Type tests use `.test-d.ts`.",
+    });
+    expect(parsed.paths).toEqual([]);
+  });
 });
 
 describe("discoverContextFiles", () => {

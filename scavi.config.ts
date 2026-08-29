@@ -5,6 +5,8 @@ export default {
   checks: {
     semantic: false,
     semanticConfidence: 0.6,
+    semanticMaxClaims: 20,
+    semanticEvidenceLimit: 5,
   },
   ai: {
     provider: "openai",

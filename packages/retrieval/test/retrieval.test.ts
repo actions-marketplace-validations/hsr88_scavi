@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import os from "node:os";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { indexRepository, retrieveEvidence } from "../src/index.js";
 
 describe("retrieveEvidence", () => {
@@ -29,6 +29,14 @@ describe("retrieveEvidence", () => {
       { file: "src/colors.ts", startLine: 1, endLine: 1, content: "export const purple = '#7657d6';" },
     ])).toEqual([]);
   });
+
+  it("caps broad concept aliases so exact product terms win", () => {
+    const evidence = retrieveEvidence("The service uses Pino for structured logging", [
+      { file: "backend/api.ts", startLine: 1, endLine: 2, content: "api.get('/users', getUser);" },
+      { file: "logging/logger.ts", startLine: 1, endLine: 2, content: "import pino from 'pino';\nexport const logger = pino();" },
+    ]);
+    expect(evidence[0]?.file).toBe("logging/logger.ts");
+  });
 });
 
 describe("indexRepository", () => {
@@ -38,6 +46,16 @@ describe("indexRepository", () => {
       await writeFile(path.join(root, "z.ts"), "export const z = 1;\n", "utf8");
       await writeFile(path.join(root, "a.ts"), "export const a = 1;\n", "utf8");
       expect((await indexRepository(root, { maxFiles: 1 }))[0]?.file).toBe("a.ts");
+    } finally { await rm(root, { recursive: true, force: true }) }
+  });
+
+  it("does not index nested git repositories", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-nested-repo-"));
+    try {
+      await mkdir(path.join(root, "vendor", ".git"), { recursive: true });
+      await writeFile(path.join(root, "visible.ts"), "export const visible = true;\n", "utf8");
+      await writeFile(path.join(root, "vendor", "hidden.ts"), "export const hidden = true;\n", "utf8");
+      expect((await indexRepository(root)).map((item) => item.file)).toEqual(["visible.ts"]);
     } finally { await rm(root, { recursive: true, force: true }) }
   });
 });

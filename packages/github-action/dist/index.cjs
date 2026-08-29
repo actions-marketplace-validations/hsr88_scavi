@@ -19349,6 +19349,7 @@ var import_node_util = require("node:util");
 
 // ../core/dist/index.js
 var import_promises4 = require("node:fs/promises");
+var import_node_crypto = require("node:crypto");
 var import_node_path4 = __toESM(require("node:path"), 1);
 
 // ../ai/dist/index.js
@@ -19413,7 +19414,9 @@ var OpenAIResponsesProvider = class {
     const text = payload.output_text ?? payload.output?.flatMap((item) => item.content ?? []).find((item) => item.type === "output_text")?.text;
     if (!text)
       throw new Error("OpenAI Responses API returned no output text");
-    return parseResult(JSON.parse(text));
+    const result = parseResult(JSON.parse(text));
+    const usage = payload.usage;
+    return usage ? { ...result, usage: { inputTokens: usage.input_tokens ?? 0, outputTokens: usage.output_tokens ?? 0, totalTokens: usage.total_tokens ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) } } : result;
   }
 };
 var OllamaProvider = class {
@@ -19441,7 +19444,9 @@ Return JSON matching this schema: ${JSON.stringify(VERDICT_SCHEMA)}` }], format:
     const payload = await response.json();
     if (!payload.message?.content)
       throw new Error("Ollama API returned no message content");
-    return parseResult(JSON.parse(payload.message.content));
+    const result = parseResult(JSON.parse(payload.message.content));
+    const inputTokens = payload.prompt_eval_count ?? 0, outputTokens = payload.eval_count ?? 0;
+    return inputTokens || outputTokens ? { ...result, usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens } } : result;
   }
 };
 
@@ -19528,6 +19533,17 @@ function isPath(value) {
     return false;
   return value.startsWith("./") || value.startsWith("../") || value.startsWith("/") || /^[\w.-]+\/[\w./-]+$/.test(value) || /^\.?[\w-]+\.[a-z0-9]{1,8}$/i.test(value);
 }
+function isExternalSystemPath(value) {
+  return /^\/(?:usr|opt|etc|var|tmp|home|Users|Applications|Library|System)\//.test(value) || /^[A-Za-z]:[\\/]/.test(value);
+}
+function isEndpointExample(value, line) {
+  if (!/^(?:\/[\w.-]+|[\w.-]+\/[\w./<>-]+)$/.test(value))
+    return false;
+  return /\b(?:GET|POST|PUT|PATCH|DELETE|HTTP|RPC|endpoint|route|request|response|method|payload|mount)\b/i.test(line);
+}
+function isGenericFileSuffix(value) {
+  return /^\.[^.]+\.[a-z0-9]{1,8}$/i.test(value) && value !== ".env.example";
+}
 function command(value) {
   const match = value.trim().match(/^(npm|pnpm|yarn|bun)\s+(?:(run)\s+)?([\w:@./-]+)(?:\s+.*)?$/);
   if (!match)
@@ -19558,7 +19574,7 @@ function parseContextFile(file) {
       const claimSource = { ...source, column: (match.index ?? 0) + 2 };
       if (parsed)
         commands.push({ ...parsed, source: claimSource, text: line.trim() });
-      else if (isPath(value))
+      else if (isPath(value) && !isExternalSystemPath(value) && !isEndpointExample(value, line) && !isGenericFileSuffix(value))
         paths.push({ type: "path", value, source: claimSource, text: line.trim() });
     }
     if (inFence) {
@@ -19598,7 +19614,7 @@ var import_node_path2 = __toESM(require("node:path"), 1);
 var EXCLUDED_DIRECTORIES = /* @__PURE__ */ new Set([".git", "node_modules", "dist", "coverage", ".scavi"]);
 var TEXT_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".md", ".mdc", ".yaml", ".yml", ".toml", ".py", ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php", ".sql", ".graphql", ".sh", ".ps1"]);
 var TEXT_FILENAMES = /* @__PURE__ */ new Set(["Dockerfile", "Makefile", "Taskfile", ".env.example"]);
-var STOP_WORDS = /* @__PURE__ */ new Set(["the", "and", "that", "this", "with", "from", "into", "uses", "use", "are", "is", "files"]);
+var STOP_WORDS = /* @__PURE__ */ new Set(["the", "and", "that", "this", "with", "from", "into", "uses", "use", "are", "is", "files", "for", "from", "into", "of", "to", "in", "on", "or", "an", "as", "at", "by"]);
 var CONCEPT_GROUPS = [
   ["configuration", "config", "settings", "preferences"],
   ["persist", "persisted", "persistence", "store", "stored", "storage", "save", "saved", "write", "writes", "database", "insert"],
@@ -19608,18 +19624,7 @@ var CONCEPT_GROUPS = [
   ["backend", "server", "api", "service"]
 ];
 function tokens(value) {
-  return [...new Set((value.toLowerCase().match(/[a-z0-9_./-]{3,}/g) ?? []).filter((token) => !STOP_WORDS.has(token)))];
-}
-function expandedTerms(query) {
-  const terms = new Map(query.map((token) => [token, 1]));
-  for (const group of CONCEPT_GROUPS) {
-    if (!group.some((term) => query.includes(term)))
-      continue;
-    for (const term of group)
-      if (!terms.has(term))
-        terms.set(term, 0.5);
-  }
-  return terms;
+  return [...new Set((value.toLowerCase().match(/[a-z0-9_./-]{2,}/g) ?? []).filter((token) => !STOP_WORDS.has(token)))];
 }
 async function indexRepository(root, options = {}) {
   const exclude = new Set((options.excludeFiles ?? []).map((file) => file.replace(/\\/g, "/")));
@@ -19630,8 +19635,14 @@ async function indexRepository(root, options = {}) {
       const absolute = import_node_path2.default.join(directory, entry.name);
       const relative = import_node_path2.default.relative(root, absolute).split(import_node_path2.default.sep).join("/");
       if (entry.isDirectory()) {
-        if (!relative.split("/").some((part) => EXCLUDED_DIRECTORIES.has(part)))
+        if (!relative.split("/").some((part) => EXCLUDED_DIRECTORIES.has(part))) {
+          try {
+            await (0, import_promises2.stat)(import_node_path2.default.join(absolute, ".git"));
+            continue;
+          } catch {
+          }
           discovered.push(...await walk(absolute));
+        }
       } else if (entry.isFile())
         discovered.push(absolute);
     }
@@ -19665,18 +19676,28 @@ function retrieveEvidence(claim, chunks, limit = 5) {
   const query = tokens(claim);
   if (query.length === 0)
     return [];
-  const terms = expandedTerms(query);
+  const activeConcepts = CONCEPT_GROUPS.filter((group) => group.some((term) => query.includes(term)));
   return chunks.map((chunk) => {
     const content = chunk.content.toLowerCase(), file = chunk.file.toLowerCase();
     let score = 0;
     const matchedPrimary = /* @__PURE__ */ new Set();
-    for (const [term, weight] of terms) {
+    for (const term of query) {
       const occurrences = content.split(term).length - 1;
-      score += Math.min(occurrences, 5) * weight;
+      score += Math.min(occurrences, 5);
       if (file.includes(term))
-        score += 3 * weight;
-      if (weight === 1 && (occurrences > 0 || file.includes(term)))
+        score += 3;
+      if (occurrences > 0 || file.includes(term))
         matchedPrimary.add(term);
+    }
+    for (const group of activeConcepts) {
+      let bestAliasScore = 0;
+      for (const term of group) {
+        if (query.includes(term))
+          continue;
+        const occurrences = content.split(term).length - 1;
+        bestAliasScore = Math.max(bestAliasScore, Math.min(occurrences, 5) * 0.5 + (file.includes(term) ? 1.5 : 0));
+      }
+      score += Math.min(bestAliasScore, 2);
     }
     score += matchedPrimary.size * 0.5;
     return { ...chunk, score: Math.round(score * 100) / 100 };
@@ -19687,6 +19708,8 @@ function retrieveEvidence(claim, chunks, limit = 5) {
 var import_promises3 = require("node:fs/promises");
 var import_node_path3 = __toESM(require("node:path"), 1);
 var LOCKFILES = [["pnpm-lock.yaml", "pnpm"], ["package-lock.json", "npm"], ["yarn.lock", "yarn"], ["bun.lock", "bun"], ["bun.lockb", "bun"]];
+var EXCLUDED_DIRECTORIES2 = /* @__PURE__ */ new Set([".git", ".scavi", "node_modules", "dist", "coverage", "target", ".next"]);
+var UNSUPPORTED_RUNTIME_CLAIMS = /* @__PURE__ */ new Set(["python", "rust", "go", "java", "ruby", "php"]);
 async function exists2(file) {
   try {
     await (0, import_promises3.lstat)(file);
@@ -19695,31 +19718,55 @@ async function exists2(file) {
     return false;
   }
 }
+async function repositoryFiles(root) {
+  const files = [];
+  async function walk(directory) {
+    for (const entry of await (0, import_promises3.readdir)(directory, { withFileTypes: true })) {
+      if (entry.isDirectory() && EXCLUDED_DIRECTORIES2.has(entry.name))
+        continue;
+      const absolute = import_node_path3.default.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (absolute !== root && await exists2(import_node_path3.default.join(absolute, ".git")))
+          continue;
+        await walk(absolute);
+      } else if (entry.isFile())
+        files.push(import_node_path3.default.relative(root, absolute).split(import_node_path3.default.sep).join("/"));
+    }
+  }
+  await walk(root);
+  return files.sort();
+}
 async function collectRepositoryFacts(root) {
   const evidence = [], detected = /* @__PURE__ */ new Set(), scripts = /* @__PURE__ */ new Set(), dependencies = {};
-  let manifestManager;
-  try {
-    const manifest = JSON.parse(await (0, import_promises3.readFile)(import_node_path3.default.join(root, "package.json"), "utf8"));
-    Object.keys(manifest.scripts ?? {}).forEach((script) => scripts.add(script));
-    Object.assign(dependencies, manifest.dependencies, manifest.devDependencies, manifest.peerDependencies, manifest.optionalDependencies);
-    if (manifest.engines?.node)
-      dependencies.node = manifest.engines.node;
-    const match = manifest.packageManager?.match(/^(npm|pnpm|yarn|bun)@/);
-    if (match) {
-      manifestManager = match[1];
-      detected.add(manifestManager);
-      evidence.push({ file: "package.json", description: `packageManager: ${manifest.packageManager}` });
-    }
-  } catch (error2) {
-    if (error2.code !== "ENOENT")
-      throw new Error("Invalid package.json", { cause: error2 });
+  const files = await repositoryFiles(root), repositoryPaths = new Set(files);
+  for (const file of files) {
+    const segments = file.split("/");
+    for (let index = 1; index < segments.length; index += 1)
+      repositoryPaths.add(segments.slice(0, index).join("/"));
   }
+  let manifestManager;
+  for (const manifestPath of files.filter((file) => import_node_path3.default.posix.basename(file) === "package.json"))
+    try {
+      const manifest = JSON.parse(await (0, import_promises3.readFile)(import_node_path3.default.join(root, manifestPath), "utf8"));
+      Object.keys(manifest.scripts ?? {}).forEach((script) => scripts.add(script));
+      Object.assign(dependencies, manifest.dependencies, manifest.devDependencies, manifest.peerDependencies, manifest.optionalDependencies);
+      if (manifest.engines?.node)
+        dependencies.node = manifest.engines.node;
+      const match = manifestPath === "package.json" ? manifest.packageManager?.match(/^(npm|pnpm|yarn|bun)@/) : void 0;
+      if (match) {
+        manifestManager = match[1];
+        detected.add(manifestManager);
+        evidence.push({ file: "package.json", description: `packageManager: ${manifest.packageManager}` });
+      }
+    } catch (error2) {
+      throw new Error(`Invalid ${manifestPath}`, { cause: error2 });
+    }
   for (const [lockfile, manager] of LOCKFILES)
     if (await exists2(import_node_path3.default.join(root, lockfile))) {
       detected.add(manager);
       evidence.push({ file: lockfile, description: `${lockfile} exists` });
     }
-  return { root, packageManager: detected.size === 1 ? [...detected][0] : manifestManager, packageManagerEvidence: evidence, scripts, dependencies };
+  return { root, packageManager: detected.size === 1 ? [...detected][0] : manifestManager, packageManagerEvidence: evidence, scripts, dependencies, repositoryPaths };
 }
 function resolveClaimPath(root, value) {
   const normalized = value.replace(/\\/g, "/");
@@ -19736,6 +19783,27 @@ async function presentInside(root, candidate) {
   } catch {
     return false;
   }
+}
+function segmentBase(value) {
+  return value.replace(/\.[^.]+$/, "").toLowerCase();
+}
+function repositoryContainsReference(paths, value) {
+  const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\//, "").replace(/\/$/, "");
+  if (!normalized)
+    return false;
+  if (paths.has(normalized) || paths.has(`${normalized}.json`))
+    return true;
+  const expected = normalized.toLowerCase().split("/").filter(Boolean).map(segmentBase);
+  for (const candidate of paths) {
+    const actual = candidate.toLowerCase().split("/").filter(Boolean).map(segmentBase);
+    let matched = 0;
+    for (const segment of actual)
+      if (segment === expected[matched])
+        matched += 1;
+    if (matched === expected.length)
+      return true;
+  }
+  return false;
 }
 function sourceOffset(content, source) {
   if (!source.column || source.line < 1 || source.column < 1)
@@ -19754,7 +19822,7 @@ async function runDeterministicRules(contexts, facts) {
   for (const context of contexts) {
     for (const claim of context.paths) {
       const candidate = resolveClaimPath(facts.root, claim.value);
-      if (!candidate || !await presentInside(facts.root, candidate)) {
+      if ((!candidate || !await presentInside(facts.root, candidate)) && !repositoryContainsReference(facts.repositoryPaths, claim.value)) {
         const basename = import_node_path3.default.posix.basename(claim.value);
         const fileLike = basename.startsWith(".") || import_node_path3.default.posix.extname(basename) !== "";
         issues.push({ id: fileLike ? "MISSING_REFERENCED_FILE" : "STALE_PATH", rule: fileLike ? "referenced-file" : "valid-path", severity: "error", source: claim.source, message: `${fileLike ? "Referenced file" : "Referenced path"} does not exist: ${claim.value}`, claim: claim.text, evidence: [{ description: candidate ? `${claim.value} was not found inside the repository` : `${claim.value} escapes the repository root` }] });
@@ -19779,6 +19847,8 @@ async function runDeterministicRules(contexts, facts) {
         });
       }
     for (const claim of context.dependencies) {
+      if (UNSUPPORTED_RUNTIME_CLAIMS.has(claim.package))
+        continue;
       const declared = facts.dependencies[claim.package];
       if (!declared) {
         issues.push({ id: "MISSING_DEPENDENCY", rule: "dependency-version", severity: "error", source: claim.source, message: `${claim.package} ${claim.version} is named as a dependency, but it is not declared`, claim: claim.text, evidence: [{ file: "package.json", description: `${claim.package} is absent from dependencies, devDependencies, peerDependencies, and optionalDependencies` }] });
@@ -19857,14 +19927,24 @@ async function loadConfig(root) {
   const context = contextBlock ? [...contextBlock.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]) : void 0;
   const checksBlock = source.match(/\bchecks\s*:\s*\{([\s\S]*?)\}/)?.[1];
   const semantic = checksBlock?.match(/\bsemantic\s*:\s*(true|false)/)?.[1];
-  const semanticConfidenceText = checksBlock?.match(/\bsemanticConfidence\s*:\s*(\d+(?:\.\d+)?)/)?.[1];
-  const semanticConfidence = semanticConfidenceText === void 0 ? void 0 : Number(semanticConfidenceText);
+  const numberValue = (name) => {
+    const value = checksBlock?.match(new RegExp(`\\b${name}\\s*:\\s*(\\d+(?:\\.\\d+)?)`))?.[1];
+    return value === void 0 ? void 0 : Number(value);
+  };
+  const semanticConfidence = numberValue("semanticConfidence");
+  const semanticMaxClaims = numberValue("semanticMaxClaims");
+  const semanticEvidenceLimit = numberValue("semanticEvidenceLimit");
   if (semanticConfidence !== void 0 && (semanticConfidence < 0 || semanticConfidence > 1))
     throw new Error("checks.semanticConfidence must be between 0 and 1");
+  if (semanticMaxClaims !== void 0 && (!Number.isInteger(semanticMaxClaims) || semanticMaxClaims < 1 || semanticMaxClaims > 100))
+    throw new Error("checks.semanticMaxClaims must be an integer between 1 and 100");
+  if (semanticEvidenceLimit !== void 0 && (!Number.isInteger(semanticEvidenceLimit) || semanticEvidenceLimit < 1 || semanticEvidenceLimit > 20))
+    throw new Error("checks.semanticEvidenceLimit must be an integer between 1 and 20");
   const aiBlock = source.match(/\bai\s*:\s*\{([\s\S]*?)\}/)?.[1];
   const stringValue = (name) => aiBlock?.match(new RegExp(`\\b${name}\\s*:\\s*["']([^"']*)["']`))?.[1];
   const provider = stringValue("provider");
-  return { context, checks: semantic || semanticConfidence !== void 0 ? { semantic: semantic === "true", semanticConfidence } : void 0, ai: aiBlock ? { provider: provider === "openai" || provider === "ollama" ? provider : void 0, model: stringValue("model"), baseUrl: stringValue("baseUrl") } : void 0 };
+  const hasChecks = semantic || semanticConfidence !== void 0 || semanticMaxClaims !== void 0 || semanticEvidenceLimit !== void 0;
+  return { context, checks: hasChecks ? { semantic: semantic === "true", semanticConfidence, semanticMaxClaims, semanticEvidenceLimit } : void 0, ai: aiBlock ? { provider: provider === "openai" || provider === "ollama" ? provider : void 0, model: stringValue("model"), baseUrl: stringValue("baseUrl") } : void 0 };
 }
 function configuredModel(config) {
   return config.ai?.model || process.env.SCAVI_AI_MODEL || "";
@@ -19877,6 +19957,51 @@ function configuredProvider(config) {
     return new OllamaProvider({ model, baseUrl: config.ai.baseUrl ?? process.env.OLLAMA_HOST });
   throw new Error('Semantic analysis requires ai.provider: "openai" or "ollama"');
 }
+function emptySemanticSummary(enabled) {
+  return { enabled, candidates: 0, analyzed: 0, providerCalls: 0, cacheHits: 0, noEvidence: 0, skippedByLimit: 0, cancelled: false, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } };
+}
+function semanticCacheKey(provider, model, claim, evidence) {
+  return (0, import_node_crypto.createHash)("sha256").update(JSON.stringify({ version: 1, provider, model, claim, evidence: evidence.map(({ file, startLine, endLine, content }) => ({ file, startLine, endLine, content })) })).digest("hex");
+}
+async function loadSemanticCache(root) {
+  try {
+    const parsed = JSON.parse(await (0, import_promises4.readFile)(import_node_path4.default.join(root, ".scavi", "cache", "semantic-v1.json"), "utf8"));
+    return parsed.version === 1 && parsed.entries && typeof parsed.entries === "object" ? parsed : { version: 1, entries: {} };
+  } catch (error2) {
+    if (error2.code === "ENOENT" || error2 instanceof SyntaxError)
+      return { version: 1, entries: {} };
+    throw error2;
+  }
+}
+async function saveSemanticCache(root, cache) {
+  const scaviDirectory = import_node_path4.default.join(root, ".scavi"), cacheDirectory = import_node_path4.default.join(scaviDirectory, "cache");
+  await (0, import_promises4.mkdir)(cacheDirectory, { recursive: true });
+  try {
+    await (0, import_promises4.writeFile)(import_node_path4.default.join(scaviDirectory, ".gitignore"), "*\n", { encoding: "utf8", flag: "wx" });
+  } catch (error2) {
+    if (error2.code !== "EEXIST")
+      throw error2;
+  }
+  const target = import_node_path4.default.join(cacheDirectory, "semantic-v1.json");
+  const temporary = import_node_path4.default.join(cacheDirectory, `.semantic-v1-${process.pid}-${Math.random().toString(16).slice(2)}.tmp`);
+  try {
+    await (0, import_promises4.writeFile)(temporary, `${JSON.stringify(cache, null, 2)}
+`, { encoding: "utf8", flag: "wx" });
+    await (0, import_promises4.rename)(temporary, target);
+  } finally {
+    try {
+      await (0, import_promises4.unlink)(temporary);
+    } catch {
+    }
+  }
+}
+function addUsage(total, usage) {
+  if (!usage)
+    return;
+  total.inputTokens += usage.inputTokens;
+  total.outputTokens += usage.outputTokens;
+  total.totalTokens += usage.totalTokens;
+}
 async function checkRepository(start, options = {}) {
   const root = start ? import_node_path4.default.resolve(start) : await findRepositoryRoot();
   if (!await isDirectory2(root))
@@ -19887,22 +20012,58 @@ async function checkRepository(start, options = {}) {
   const parsed = parseContextFiles(contextFiles);
   const issues = await runDeterministicRules(parsed, facts);
   const semanticFindings = [];
-  if (config.checks?.semantic) {
+  const semanticEnabled = options.semantic ?? config.checks?.semantic ?? false;
+  const semanticSummary = emptySemanticSummary(semanticEnabled);
+  if (semanticEnabled) {
+    const allClaims = parsed.flatMap((context) => context.semanticClaims);
+    const maxClaims = config.checks?.semanticMaxClaims ?? 20;
+    const evidenceLimit = config.checks?.semanticEvidenceLimit ?? 5;
+    const claims = allClaims.slice(0, maxClaims);
+    semanticSummary.candidates = allClaims.length;
+    semanticSummary.skippedByLimit = allClaims.length - claims.length;
     const provider = options.semanticProvider ?? configuredProvider(config);
-    const confidenceThreshold = config.checks.semanticConfidence ?? 0.6;
-    const chunks = await indexRepository(root, { excludeFiles: [...contextFiles.map((file) => file.relativePath), "scavi.config.ts"] });
-    for (const claim of parsed.flatMap((context) => context.semanticClaims)) {
-      const evidence = retrieveEvidence(claim.text, chunks);
-      if (evidence.length === 0) {
-        semanticFindings.push({ source: claim.source, claim: claim.text, verdict: "uncertain", confidence: 0, evidence: [], reason: "No relevant repository evidence was retrieved." });
-        continue;
+    const model = configuredModel(config);
+    semanticSummary.provider = provider.name;
+    semanticSummary.model = model;
+    const confidenceThreshold = config.checks?.semanticConfidence ?? 0.6;
+    const allowed = provider.name !== "openai" || !options.confirmExternal || await options.confirmExternal({ provider: provider.name, model, claims: claims.length, evidenceLimit });
+    if (!allowed)
+      semanticSummary.cancelled = true;
+    else {
+      const chunks = await indexRepository(root, { excludeFiles: [...contextFiles.map((file) => file.relativePath), "scavi.config.ts"] });
+      const cacheEnabled = options.cache !== false;
+      const cache = cacheEnabled ? await loadSemanticCache(root) : { version: 1, entries: {} };
+      let cacheChanged = false;
+      for (const claim of claims) {
+        semanticSummary.analyzed += 1;
+        const evidence = retrieveEvidence(claim.text, chunks, evidenceLimit);
+        if (evidence.length === 0) {
+          semanticSummary.noEvidence += 1;
+          semanticFindings.push({ source: claim.source, claim: claim.text, verdict: "uncertain", confidence: 0, evidence: [], reason: "No relevant repository evidence was retrieved." });
+          continue;
+        }
+        const key = semanticCacheKey(provider.name, model, claim.text, evidence);
+        let result = cacheEnabled ? cache.entries[key] : void 0;
+        const cached = Boolean(result);
+        if (result)
+          semanticSummary.cacheHits += 1;
+        else {
+          result = await provider.verify({ claim: claim.text, evidence });
+          semanticSummary.providerCalls += 1;
+          addUsage(semanticSummary.usage, result.usage);
+          if (cacheEnabled) {
+            cache.entries[key] = result;
+            cacheChanged = true;
+          }
+        }
+        const verdict = result.confidence < confidenceThreshold ? "uncertain" : result.verdict;
+        const reason = verdict === "uncertain" && result.verdict !== "uncertain" ? `Provider returned ${result.verdict} at ${Math.round(result.confidence * 100)}%, below the configured ${Math.round(confidenceThreshold * 100)}% threshold. ${result.reason}` : result.reason;
+        semanticFindings.push({ source: claim.source, claim: claim.text, evidence, provider: provider.name, verdict, confidence: result.confidence, reason, cached, usage: cached ? void 0 : result.usage });
+        if (verdict === "stale")
+          issues.push({ id: "POSSIBLY_STALE", rule: "semantic-verification", severity: "warning", source: claim.source, message: reason, claim: claim.text, confidence: result.confidence, evidence: evidence.map((item) => ({ file: item.file, description: `lines ${item.startLine}-${item.endLine}, retrieval score ${item.score}` })) });
       }
-      const result = await provider.verify({ claim: claim.text, evidence });
-      const verdict = result.confidence < confidenceThreshold ? "uncertain" : result.verdict;
-      const reason = verdict === "uncertain" && result.verdict !== "uncertain" ? `Provider returned ${result.verdict} at ${Math.round(result.confidence * 100)}%, below the configured ${Math.round(confidenceThreshold * 100)}% threshold. ${result.reason}` : result.reason;
-      semanticFindings.push({ source: claim.source, claim: claim.text, evidence, provider: provider.name, verdict, confidence: result.confidence, reason });
-      if (verdict === "stale")
-        issues.push({ id: "POSSIBLY_STALE", rule: "semantic-verification", severity: "warning", source: claim.source, message: reason, claim: claim.text, confidence: result.confidence, evidence: evidence.map((item) => ({ file: item.file, description: `lines ${item.startLine}-${item.endLine}, retrieval score ${item.score}` })) });
+      if (cacheChanged)
+        await saveSemanticCache(root, cache);
     }
   }
   return {
@@ -19911,6 +20072,7 @@ async function checkRepository(start, options = {}) {
     facts,
     issues,
     semanticFindings,
+    semanticSummary,
     summary: {
       errors: issues.filter((issue2) => issue2.severity === "error").length,
       warnings: issues.filter((issue2) => issue2.severity === "warning").length,

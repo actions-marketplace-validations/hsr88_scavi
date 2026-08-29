@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
 import path from "node:path";
-import { applyFixes, checkRepository, exitCodeFor, initRepository, previewFixes, type CheckResult, type InitResult } from "@scavi/core";
+import { applyFixes, checkRepository, exitCodeFor, initRepository, previewFixes, type CheckResult, type ExternalAnalysisInfo, type InitResult } from "@scavi/core";
 import { createPalette, renderFixPreview, renderText, shouldUseColor } from "./render.js";
 
-function usage(): string { return "Usage:\n  scavi init [path]\n  scavi check [path] [--format text|json] [--color|--no-color]\n  scavi fix [path] [--color|--no-color]" }
+function usage(): string { return "Usage:\n  scavi init [path]\n  scavi check [path] [--semantic] [--yes] [--no-cache] [--format text|json] [--color|--no-color]\n  scavi fix [path] [--color|--no-color]" }
+
+async function confirmExternalAnalysis(info: ExternalAnalysisInfo, assumeYes: boolean): Promise<boolean> {
+  console.error(`\nAI semantic analysis enabled.\n\nProvider: ${info.provider}\nModel: ${info.model}\nClaims: up to ${info.claims}\nEvidence: up to ${info.evidenceLimit} chunks per claim\n\nOnly each claim and its locally retrieved evidence will be sent. The full repository is not transmitted.`);
+  if (assumeYes) return true;
+  if (!process.stdin.isTTY) throw new Error("External semantic analysis requires interactive confirmation. Re-run with --yes to approve it in CI or a non-interactive shell.");
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  const answer = await prompt.question("\nContinue? [y/N] ");
+  prompt.close();
+  return /^y(?:es)?$/i.test(answer.trim());
+}
 
 function renderInit(result: InitResult): string {
   const relative = result.configPath.slice(result.root.length + 1);
@@ -29,6 +39,7 @@ function jsonReport(result: CheckResult): unknown {
     },
     issues: result.issues,
     semanticFindings: result.semanticFindings,
+    semanticSummary: result.semanticSummary,
     summary: result.summary,
   };
 }
@@ -47,7 +58,7 @@ async function main(): Promise<void> {
     const positional = args.slice(1).filter((arg) => arg !== "--no-color" && arg !== "--color");
     if (positional.length > 1) { console.error(usage()); process.exitCode = 2; return }
     try {
-      const result = await checkRepository(positional[0]);
+      const result = await checkRepository(positional[0], { semantic: false });
       const fixable = result.issues.filter((issue) => issue.fix);
       if (fixable.length === 0) {
         console.log(result.issues.length === 0 ? "✓ No issues found." : "No deterministic fixes are available for the current issues.");
@@ -62,7 +73,7 @@ async function main(): Promise<void> {
       if (!/^y(?:es)?$/i.test(answer.trim())) { console.log("No files changed."); process.exitCode = exitCodeFor(result); return }
       const applied = await applyFixes(result);
       console.log(`Applied ${applied} minimal ${applied === 1 ? "edit" : "edits"}.`);
-      process.exitCode = exitCodeFor(await checkRepository(positional[0]));
+      process.exitCode = exitCodeFor(await checkRepository(positional[0], { semantic: false }));
     } catch (error) {
       console.error(`Scavi failed: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 2;
@@ -73,10 +84,12 @@ async function main(): Promise<void> {
   const formatIndex = args.indexOf("--format");
   const format = formatIndex >= 0 ? args[formatIndex + 1] : "text";
   if (format !== "text" && format !== "json") { console.error("Invalid --format. Expected text or json."); process.exitCode = 2; return }
-  const positional = args.slice(1).filter((arg, index) => arg !== "--format" && args[index] !== "--format" && arg !== "--no-color" && arg !== "--color");
+  const semantic = args.includes("--semantic"), assumeYes = args.includes("--yes"), cache = !args.includes("--no-cache");
+  const flags = new Set(["--no-color", "--color", "--semantic", "--yes", "--no-cache"]);
+  const positional = args.slice(1).filter((arg, index) => arg !== "--format" && args[index] !== "--format" && !flags.has(arg));
   if (positional.length > 1) { console.error(usage()); process.exitCode = 2; return }
   try {
-    const result = await checkRepository(positional[0]);
+    const result = await checkRepository(positional[0], { semantic: semantic ? true : undefined, cache, confirmExternal: (info) => confirmExternalAnalysis(info, assumeYes) });
     console.log(format === "json" ? JSON.stringify(jsonReport(result), null, 2) : renderText(result, { color }));
     process.exitCode = exitCodeFor(result);
   } catch (error) {

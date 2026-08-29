@@ -8,7 +8,7 @@ export interface RetrievalOptions { excludeFiles?: string[]; maxFiles?: number; 
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", "dist", "coverage", ".scavi"]);
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".md", ".mdc", ".yaml", ".yml", ".toml", ".py", ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php", ".sql", ".graphql", ".sh", ".ps1"]);
 const TEXT_FILENAMES = new Set(["Dockerfile", "Makefile", "Taskfile", ".env.example"]);
-const STOP_WORDS = new Set(["the", "and", "that", "this", "with", "from", "into", "uses", "use", "are", "is", "files"]);
+const STOP_WORDS = new Set(["the", "and", "that", "this", "with", "from", "into", "uses", "use", "are", "is", "files", "for", "from", "into", "of", "to", "in", "on", "or", "an", "as", "at", "by"]);
 const CONCEPT_GROUPS = [
   ["configuration", "config", "settings", "preferences"],
   ["persist", "persisted", "persistence", "store", "stored", "storage", "save", "saved", "write", "writes", "database", "insert"],
@@ -19,16 +19,7 @@ const CONCEPT_GROUPS = [
 ] as const;
 
 function tokens(value: string): string[] {
-  return [...new Set((value.toLowerCase().match(/[a-z0-9_./-]{3,}/g) ?? []).filter((token) => !STOP_WORDS.has(token)))];
-}
-
-function expandedTerms(query: string[]): Map<string, number> {
-  const terms = new Map(query.map((token) => [token, 1]));
-  for (const group of CONCEPT_GROUPS) {
-    if (!group.some((term) => query.includes(term))) continue;
-    for (const term of group) if (!terms.has(term)) terms.set(term, 0.5);
-  }
-  return terms;
+  return [...new Set((value.toLowerCase().match(/[a-z0-9_./-]{2,}/g) ?? []).filter((token) => !STOP_WORDS.has(token)))];
 }
 
 export async function indexRepository(root: string, options: RetrievalOptions = {}): Promise<RepositoryChunk[]> {
@@ -40,7 +31,10 @@ export async function indexRepository(root: string, options: RetrievalOptions = 
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute).split(path.sep).join("/");
       if (entry.isDirectory()) {
-        if (!relative.split("/").some((part) => EXCLUDED_DIRECTORIES.has(part))) discovered.push(...await walk(absolute));
+        if (!relative.split("/").some((part) => EXCLUDED_DIRECTORIES.has(part))) {
+          try { await stat(path.join(absolute, ".git")); continue } catch { /* not a nested repository */ }
+          discovered.push(...await walk(absolute));
+        }
       } else if (entry.isFile()) discovered.push(absolute);
     }
     return discovered;
@@ -68,16 +62,25 @@ export async function indexRepository(root: string, options: RetrievalOptions = 
 export function retrieveEvidence(claim: string, chunks: RepositoryChunk[], limit = 5): RankedEvidence[] {
   const query = tokens(claim);
   if (query.length === 0) return [];
-  const terms = expandedTerms(query);
+  const activeConcepts = CONCEPT_GROUPS.filter((group) => group.some((term) => query.includes(term)));
   return chunks.map((chunk) => {
     const content = chunk.content.toLowerCase(), file = chunk.file.toLowerCase();
     let score = 0;
     const matchedPrimary = new Set<string>();
-    for (const [term, weight] of terms) {
+    for (const term of query) {
       const occurrences = content.split(term).length - 1;
-      score += Math.min(occurrences, 5) * weight;
-      if (file.includes(term)) score += 3 * weight;
-      if (weight === 1 && (occurrences > 0 || file.includes(term))) matchedPrimary.add(term);
+      score += Math.min(occurrences, 5);
+      if (file.includes(term)) score += 3;
+      if (occurrences > 0 || file.includes(term)) matchedPrimary.add(term);
+    }
+    for (const group of activeConcepts) {
+      let bestAliasScore = 0;
+      for (const term of group) {
+        if (query.includes(term)) continue;
+        const occurrences = content.split(term).length - 1;
+        bestAliasScore = Math.max(bestAliasScore, Math.min(occurrences, 5) * 0.5 + (file.includes(term) ? 1.5 : 0));
+      }
+      score += Math.min(bestAliasScore, 2);
     }
     score += matchedPrimary.size * 0.5;
     return { ...chunk, score: Math.round(score * 100) / 100 };

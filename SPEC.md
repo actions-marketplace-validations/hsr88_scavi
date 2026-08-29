@@ -837,6 +837,19 @@ AI should be disabled unless configured.
 
 Running deterministic Scavi must never require an API key.
 
+Semantic work must be bounded through configuration:
+
+```ts
+checks: {
+  semantic: true,
+  semanticConfidence: 0.6,
+  semanticMaxClaims: 20,
+  semanticEvidenceLimit: 5,
+}
+```
+
+Interactive CLI runs must show the external provider, model, claim limit, and evidence limit before the first remote request. Non-interactive approval uses an explicit `--yes` flag.
+
 ---
 
 # 16. AI providers
@@ -1424,6 +1437,8 @@ Potential cache:
 ```
 
 This directory should be gitignored.
+
+The semantic cache key must include the claim, retrieved evidence, provider, and model. Cache values may contain verdict metadata but must not persist retrieved repository source code.
 
 ---
 

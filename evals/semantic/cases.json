@@ -1,0 +1,16 @@
+[
+  { "id": "json-to-sqlite", "claim": "Configuration is persisted in JSON files.", "expectedVerdict": "stale", "expectedEvidence": "storage/sqlite.ts" },
+  { "id": "sqlite-settings", "claim": "Application settings are stored in SQLite.", "expectedVerdict": "consistent", "expectedEvidence": "storage/sqlite.ts" },
+  { "id": "jwt-auth", "claim": "Authentication uses signed JWT access tokens.", "expectedVerdict": "consistent", "expectedEvidence": "auth/jwt.ts" },
+  { "id": "database-sessions", "claim": "Authentication sessions are stored in the database.", "expectedVerdict": "stale", "expectedEvidence": "auth/jwt.ts" },
+  { "id": "react-frontend", "claim": "The frontend uses React 19.", "expectedVerdict": "consistent", "expectedEvidence": "frontend/app.tsx" },
+  { "id": "graphql-api", "claim": "The backend exposes a GraphQL API.", "expectedVerdict": "stale", "expectedEvidence": "backend/api.ts" },
+  { "id": "redis-queue", "claim": "Background jobs run through a Redis-backed queue.", "expectedVerdict": "consistent", "expectedEvidence": "queue/jobs.ts" },
+  { "id": "environment-config", "claim": "Runtime configuration is read from environment variables.", "expectedVerdict": "consistent", "expectedEvidence": "config/environment.ts" },
+  { "id": "mysql-database", "claim": "Application data is stored in MySQL.", "expectedVerdict": "stale", "expectedEvidence": "database/postgres.ts" },
+  { "id": "pino-logging", "claim": "The service uses Pino for structured logging.", "expectedVerdict": "consistent", "expectedEvidence": "logging/logger.ts" },
+  { "id": "jest-tests", "claim": "Unit tests run with Jest.", "expectedVerdict": "stale", "expectedEvidence": "tests/runner.ts" },
+  { "id": "s3-uploads", "claim": "User uploads are stored in Amazon S3.", "expectedVerdict": "consistent", "expectedEvidence": "uploads/s3.ts" },
+  { "id": "email-notifications", "claim": "Users receive an email after every configuration change.", "expectedVerdict": "uncertain", "expectedEvidence": null },
+  { "id": "audit-retention", "claim": "Audit records are retained for seven years.", "expectedVerdict": "uncertain", "expectedEvidence": null }
+]

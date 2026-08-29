@@ -19,6 +19,20 @@ describe("checkRepository", () => {
     expect(result.issues.map((issue) => issue.id)).toEqual(expect.arrayContaining(["STALE_PATH", "MISSING_REFERENCED_FILE", "INVALID_COMMAND", "PACKAGE_MANAGER_MISMATCH", "CONTEXT_CONFLICT", "DEPENDENCY_VERSION_MISMATCH"]));
     expect(exitCodeFor(result)).toBe(1);
   });
+
+  it("resolves workspace scripts and monorepo-relative file references", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-monorepo-"));
+    try {
+      await mkdir(path.join(root, "packages", "app", "agents"), { recursive: true });
+      await writeFile(path.join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.32.1" }), "utf8");
+      await writeFile(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+      await writeFile(path.join(root, "packages", "app", "package.json"), JSON.stringify({ scripts: { dev: "vite" } }), "utf8");
+      await writeFile(path.join(root, "packages", "app", "Cargo.toml"), "[package]\nname='app'\n", "utf8");
+      await writeFile(path.join(root, "packages", "app", "agents", "tsconfig.json"), "{}\n", "utf8");
+      await writeFile(path.join(root, "AGENTS.md"), "Run `pnpm dev`. Update `Cargo.toml`. Strict mode uses `agents/tsconfig`.\n", "utf8");
+      expect((await checkRepository(root)).issues).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }) }
+  });
 });
 
 describe("findRepositoryRoot", () => {
@@ -40,7 +54,7 @@ describe("initRepository", () => {
       const first = await initRepository(root), second = await initRepository(root);
       expect(first.created).toBe(true);
       expect(second.created).toBe(false);
-      expect(await loadConfig(root)).toEqual({ context: ["AGENTS.md"], checks: { semantic: false, semanticConfidence: 0.6 }, ai: { provider: "openai", model: "", baseUrl: undefined } });
+      expect(await loadConfig(root)).toEqual({ context: ["AGENTS.md"], checks: { semantic: false, semanticConfidence: 0.6, semanticMaxClaims: 20, semanticEvidenceLimit: 5 }, ai: { provider: "openai", model: "", baseUrl: undefined } });
       expect(await readFile(path.join(root, "scavi.config.ts"), "utf8")).toContain("export default");
     } finally { await rm(root, { recursive: true, force: true }) }
   });
@@ -158,6 +172,60 @@ describe("semantic verification", () => {
       expect(result.semanticFindings[0]?.reason).toContain("below the configured 80% threshold");
       expect(result.issues.map((issue) => issue.id)).not.toContain("POSSIBLY_STALE");
       expect(exitCodeFor(result)).toBe(0);
+    } finally { await rm(root, { recursive: true, force: true }) }
+  });
+
+  it("requires external consent before calling an OpenAI provider", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-semantic-consent-"));
+    try {
+      await mkdir(path.join(root, "src"));
+      await writeFile(path.join(root, "AGENTS.md"), "Configuration is persisted in JSON files.\n", "utf8");
+      await writeFile(path.join(root, "src", "storage.ts"), "export function saveConfiguration() { return openSqlite(); }\n", "utf8");
+      await writeFile(path.join(root, "scavi.config.ts"), "export default { checks: { semantic: true }, ai: { provider: \"openai\", model: \"test\" } };\n", "utf8");
+      const provider: SemanticProvider = { name: "openai", async verify() { throw new Error("must not be called") } };
+      const result = await checkRepository(root, { semanticProvider: provider, confirmExternal: async () => false });
+      expect(result.semanticSummary).toMatchObject({ enabled: true, cancelled: true, providerCalls: 0 });
+      expect(result.semanticFindings).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }) }
+  });
+
+  it("caches semantic verdicts without storing repository evidence", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-semantic-cache-"));
+    try {
+      await mkdir(path.join(root, "src"));
+      await writeFile(path.join(root, "AGENTS.md"), "Configuration is persisted in JSON files.\n", "utf8");
+      await writeFile(path.join(root, "src", "storage.ts"), "export function saveConfiguration() { return openSqlite(); }\n", "utf8");
+      await writeFile(path.join(root, "scavi.config.ts"), "export default { checks: { semantic: true }, ai: { provider: \"openai\", model: \"test\" } };\n", "utf8");
+      let calls = 0;
+      const provider: SemanticProvider = { name: "mock", async verify() {
+        calls += 1;
+        return { verdict: "stale", confidence: 0.9, reason: "SQLite is used.", usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } };
+      } };
+      const first = await checkRepository(root, { semanticProvider: provider });
+      const second = await checkRepository(root, { semanticProvider: provider });
+      expect(calls).toBe(1);
+      expect(first.semanticSummary).toMatchObject({ providerCalls: 1, cacheHits: 0, usage: { totalTokens: 120 } });
+      expect(second.semanticSummary).toMatchObject({ providerCalls: 0, cacheHits: 1, usage: { totalTokens: 0 } });
+      expect(second.semanticFindings[0]?.cached).toBe(true);
+      expect(await readFile(path.join(root, ".scavi", ".gitignore"), "utf8")).toBe("*\n");
+      const cache = await readFile(path.join(root, ".scavi", "cache", "semantic-v1.json"), "utf8");
+      expect(cache).not.toContain("openSqlite");
+    } finally { await rm(root, { recursive: true, force: true }) }
+  });
+
+  it("limits semantic claims and evidence chunks", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-semantic-limits-"));
+    try {
+      await mkdir(path.join(root, "src"));
+      await writeFile(path.join(root, "AGENTS.md"), "Configuration is persisted in JSON files.\nAuthentication is stored in signed sessions.\n", "utf8");
+      await writeFile(path.join(root, "src", "storage.ts"), "saveConfiguration(openSqlite());\ncreateSignedSession();\n", "utf8");
+      await writeFile(path.join(root, "scavi.config.ts"), "export default { checks: { semantic: true, semanticMaxClaims: 1, semanticEvidenceLimit: 1 }, ai: { provider: \"openai\", model: \"test\" } };\n", "utf8");
+      const provider: SemanticProvider = { name: "mock", async verify(request) {
+        expect(request.evidence).toHaveLength(1);
+        return { verdict: "uncertain", confidence: 0.5, reason: "Test." };
+      } };
+      const result = await checkRepository(root, { semanticProvider: provider, cache: false });
+      expect(result.semanticSummary).toMatchObject({ candidates: 2, analyzed: 1, providerCalls: 1, skippedByLimit: 1 });
     } finally { await rm(root, { recursive: true, force: true }) }
   });
 });

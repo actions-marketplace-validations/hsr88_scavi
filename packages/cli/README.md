@@ -31,6 +31,9 @@ Available commands:
 scavi init
 scavi check
 scavi check --format json
+scavi check --semantic
+scavi check --semantic --yes
+scavi check --semantic --no-cache
 scavi check --color
 scavi check --no-color
 scavi fix
@@ -50,6 +53,8 @@ export default {
   checks: {
     semantic: true,
     semanticConfidence: 0.6,
+    semanticMaxClaims: 20,
+    semanticEvidenceLimit: 5,
   },
   ai: {
     provider: "openai",
@@ -75,5 +80,7 @@ Verdict:  stale (92%)
 ```
 
 Semantic warnings do not fail CI by default. For fully local verification, configure `provider: "ollama"` and a local model instead.
+
+Before an OpenAI request, interactive CLI runs show exactly which provider, model, claim limit, and evidence limit will be used. Non-interactive runs require `--yes`. Verdicts are cached in `.scavi/cache`; use `--no-cache` to force a fresh provider call.
 
 Documentation and source: https://github.com/hsr88/scavi

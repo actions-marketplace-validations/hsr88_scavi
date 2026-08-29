@@ -350,7 +350,7 @@ Planned support includes:
 
 ## CLI
 
-Available in `scavi-cli@0.1.3`:
+Core commands are available in `scavi-cli@0.1.3`. The semantic control flags below are part of the current `0.1.4` development branch:
 
 ```bash
 # Configure Scavi without overwriting an existing config
@@ -361,6 +361,15 @@ scavi check
 
 # Machine-readable output
 scavi check --format json
+
+# Enable optional semantic verification
+scavi check --semantic
+
+# Approve external analysis in CI or another non-interactive shell
+scavi check --semantic --yes
+
+# Ignore cached semantic verdicts for this run
+scavi check --semantic --no-cache
 
 # Check an explicit repository path
 scavi check ./my-project
@@ -379,6 +388,8 @@ export default {
   checks: {
     semantic: true,
     semanticConfidence: 0.6,
+    semanticMaxClaims: 20,
+    semanticEvidenceLimit: 5,
   },
   ai: {
     provider: "openai",
@@ -397,6 +408,10 @@ Scavi uses the OpenAI Responses API with stored responses disabled. Repository c
 
 `semanticConfidence` controls the minimum confidence required before a provider verdict can become a semantic warning. It defaults to `0.6`; results below the threshold are reported as `uncertain` and never fail CI.
 
+`semanticMaxClaims` and `semanticEvidenceLimit` bound external work. Before the first OpenAI request, the CLI shows the provider, model, maximum claim count, and evidence limit. Use `--yes` only after approving this in automation.
+
+Semantic verdicts are cached locally in `.scavi/cache/` using a hash of the claim, evidence, provider, and model. Cache entries contain the verdict and reason, not repository source code. Scavi creates `.scavi/.gitignore` automatically.
+
 For fully local semantic verification, run Ollama and configure:
 
 ```ts
@@ -408,6 +423,8 @@ ai: {
 ```
 
 The Ollama adapter uses its local `/api/chat` endpoint with streaming disabled, temperature `0`, and a JSON schema for the verdict.
+
+See the [semantic evaluation guide](docs/SEMANTIC_EVALS.md) for the 14-case OpenAI/Ollama comparison runner. See [real-world beta results](docs/REAL_WORLD_BETA.md) for deterministic scans of five repositories.
 
 Or without installing globally:
 
