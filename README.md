@@ -242,7 +242,31 @@ For claims about architecture, application behavior, data flow, or implementatio
 
 This is where Scavi's retrieval and AI layer comes in.
 
-Semantic verification is opt-in. Scavi first indexes text files locally, retrieves only the most relevant chunks, and sends only the claim plus those chunks to the configured provider. A weak retrieval result becomes `uncertain` without an API call.
+Semantic verification is opt-in. Scavi first indexes text files locally, retrieves only the most relevant chunks, and sends only the claim plus those chunks to the configured provider. If retrieval finds no relevant evidence, Scavi returns `uncertain` without calling the provider. Provider verdicts below the configured confidence threshold are also downgraded to `uncertain`.
+
+For example, given this context:
+
+```text
+AGENTS.md:3
+Configuration is persisted in JSON files.
+```
+
+and repository code that opens `settings.sqlite` and writes to a `settings` table, Scavi retrieves only that relevant code and reports:
+
+```text
+⚠ POSSIBLY_STALE
+
+Claim:
+  Configuration is persisted in JSON files.
+
+Verdict:
+  stale (92%)
+
+Evidence:
+  src/storage.ts:1-8
+```
+
+This path was verified end-to-end with OpenAI using `gpt-5-mini`. The lexical retrieval step remains deterministic and local.
 
 ---
 
@@ -326,7 +350,7 @@ Planned support includes:
 
 ## CLI
 
-Available in the current development version:
+Available in `scavi-cli@0.1.3`:
 
 ```bash
 # Configure Scavi without overwriting an existing config
@@ -358,7 +382,7 @@ export default {
   },
   ai: {
     provider: "openai",
-    model: "your-model-id",
+    model: "gpt-5-mini",
   },
 };
 ```
@@ -369,7 +393,7 @@ Then provide the key through the environment:
 OPENAI_API_KEY=your-key scavi check
 ```
 
-Scavi uses the OpenAI Responses API with stored responses disabled. Repository content is treated as untrusted data, and only retrieved evidence is included in a request. Deterministic mode does not require a key or make network requests.
+Scavi uses the OpenAI Responses API with stored responses disabled. Repository content is treated as untrusted data. A semantic request contains one claim and a small set of locally retrieved evidence chunks—not the full repository. Deterministic mode does not require a key or make network requests.
 
 `semanticConfidence` controls the minimum confidence required before a provider verdict can become a semantic warning. It defaults to `0.6`; results below the threshold are reported as `uncertain` and never fail CI.
 
