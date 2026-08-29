@@ -133,6 +133,7 @@ describe("semantic verification", () => {
       await writeFile(path.join(root, "scavi.config.ts"), "export default { context: [\"AGENTS.md\"], checks: { semantic: true }, ai: { provider: \"openai\", model: \"test\" } };\n", "utf8");
       const provider: SemanticProvider = { name: "mock", async verify(request) {
         expect(request.evidence[0]?.file).toBe("src/storage.ts");
+        expect(request.evidence.map((item) => item.file)).not.toContain("scavi.config.ts");
         return { verdict: "stale", confidence: 0.92, reason: "The implementation uses SQLite." };
       } };
       const result = await checkRepository(root, { semanticProvider: provider });

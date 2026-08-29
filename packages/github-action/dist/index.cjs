@@ -19598,9 +19598,28 @@ var import_node_path2 = __toESM(require("node:path"), 1);
 var EXCLUDED_DIRECTORIES = /* @__PURE__ */ new Set([".git", "node_modules", "dist", "coverage", ".scavi"]);
 var TEXT_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".md", ".mdc", ".yaml", ".yml", ".toml", ".py", ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php", ".sql", ".graphql", ".sh", ".ps1"]);
 var TEXT_FILENAMES = /* @__PURE__ */ new Set(["Dockerfile", "Makefile", "Taskfile", ".env.example"]);
-var STOP_WORDS = /* @__PURE__ */ new Set(["the", "and", "that", "this", "with", "from", "into", "uses", "use", "are", "is", "stored", "persisted"]);
+var STOP_WORDS = /* @__PURE__ */ new Set(["the", "and", "that", "this", "with", "from", "into", "uses", "use", "are", "is", "files"]);
+var CONCEPT_GROUPS = [
+  ["configuration", "config", "settings", "preferences"],
+  ["persist", "persisted", "persistence", "store", "stored", "storage", "save", "saved", "write", "writes", "database", "insert"],
+  ["authentication", "auth", "login", "session"],
+  ["authorization", "permission", "permissions", "role", "roles", "access"],
+  ["frontend", "client", "web", "ui"],
+  ["backend", "server", "api", "service"]
+];
 function tokens(value) {
   return [...new Set((value.toLowerCase().match(/[a-z0-9_./-]{3,}/g) ?? []).filter((token) => !STOP_WORDS.has(token)))];
+}
+function expandedTerms(query) {
+  const terms = new Map(query.map((token) => [token, 1]));
+  for (const group of CONCEPT_GROUPS) {
+    if (!group.some((term) => query.includes(term)))
+      continue;
+    for (const term of group)
+      if (!terms.has(term))
+        terms.set(term, 0.5);
+  }
+  return terms;
 }
 async function indexRepository(root, options = {}) {
   const exclude = new Set((options.excludeFiles ?? []).map((file) => file.replace(/\\/g, "/")));
@@ -19646,16 +19665,21 @@ function retrieveEvidence(claim, chunks, limit = 5) {
   const query = tokens(claim);
   if (query.length === 0)
     return [];
+  const terms = expandedTerms(query);
   return chunks.map((chunk) => {
     const content = chunk.content.toLowerCase(), file = chunk.file.toLowerCase();
     let score = 0;
-    for (const token of query) {
-      const occurrences = content.split(token).length - 1;
-      score += Math.min(occurrences, 5);
-      if (file.includes(token))
-        score += 3;
+    const matchedPrimary = /* @__PURE__ */ new Set();
+    for (const [term, weight] of terms) {
+      const occurrences = content.split(term).length - 1;
+      score += Math.min(occurrences, 5) * weight;
+      if (file.includes(term))
+        score += 3 * weight;
+      if (weight === 1 && (occurrences > 0 || file.includes(term)))
+        matchedPrimary.add(term);
     }
-    return { ...chunk, score };
+    score += matchedPrimary.size * 0.5;
+    return { ...chunk, score: Math.round(score * 100) / 100 };
   }).filter((chunk) => chunk.score > 0).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file)).slice(0, limit);
 }
 
@@ -19866,7 +19890,7 @@ async function checkRepository(start, options = {}) {
   if (config.checks?.semantic) {
     const provider = options.semanticProvider ?? configuredProvider(config);
     const confidenceThreshold = config.checks.semanticConfidence ?? 0.6;
-    const chunks = await indexRepository(root, { excludeFiles: contextFiles.map((file) => file.relativePath) });
+    const chunks = await indexRepository(root, { excludeFiles: [...contextFiles.map((file) => file.relativePath), "scavi.config.ts"] });
     for (const claim of parsed.flatMap((context) => context.semanticClaims)) {
       const evidence = retrieveEvidence(claim.text, chunks);
       if (evidence.length === 0) {

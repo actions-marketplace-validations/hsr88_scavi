@@ -82,7 +82,7 @@ export async function checkRepository(start?: string, options: CheckOptions = {}
   if (config.checks?.semantic) {
     const provider = options.semanticProvider ?? configuredProvider(config);
     const confidenceThreshold = config.checks.semanticConfidence ?? 0.6;
-    const chunks = await indexRepository(root, { excludeFiles: contextFiles.map((file) => file.relativePath) });
+    const chunks = await indexRepository(root, { excludeFiles: [...contextFiles.map((file) => file.relativePath), "scavi.config.ts"] });
     for (const claim of parsed.flatMap((context) => context.semanticClaims)) {
       const evidence = retrieveEvidence(claim.text, chunks);
       if (evidence.length === 0) {

@@ -13,6 +13,22 @@ describe("retrieveEvidence", () => {
     expect(evidence[0]?.file).toBe("src/storage/settings.ts");
     expect(evidence[0]?.score).toBeGreaterThan(0);
   });
+
+  it("expands repository concepts without using an LLM", () => {
+    const evidence = retrieveEvidence("Configuration is persisted in JSON files", [
+      { file: "src/components/dialog.tsx", startLine: 1, endLine: 2, content: "export function ConfigurationDialog() {}" },
+      { file: "src/storage.ts", startLine: 1, endLine: 3, content: "const database = openSqlite();\nexport function saveConfiguration() { database.insert(); }" },
+    ]);
+    expect(evidence[0]?.file).toBe("src/storage.ts");
+    expect(evidence[0]?.score).toBeGreaterThan(evidence[1]?.score ?? 0);
+    expect(evidence[0]?.score).toBeGreaterThan(3);
+  });
+
+  it("does not return unrelated chunks when no query concepts match", () => {
+    expect(retrieveEvidence("Authentication uses signed sessions", [
+      { file: "src/colors.ts", startLine: 1, endLine: 1, content: "export const purple = '#7657d6';" },
+    ])).toEqual([]);
+  });
 });
 
 describe("indexRepository", () => {
