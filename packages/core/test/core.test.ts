@@ -40,7 +40,7 @@ describe("initRepository", () => {
       const first = await initRepository(root), second = await initRepository(root);
       expect(first.created).toBe(true);
       expect(second.created).toBe(false);
-      expect(await loadConfig(root)).toEqual({ context: ["AGENTS.md"], checks: { semantic: false }, ai: { provider: "openai", model: "", baseUrl: undefined } });
+      expect(await loadConfig(root)).toEqual({ context: ["AGENTS.md"], checks: { semantic: false, semanticConfidence: 0.6 }, ai: { provider: "openai", model: "", baseUrl: undefined } });
       expect(await readFile(path.join(root, "scavi.config.ts"), "utf8")).toContain("export default");
     } finally { await rm(root, { recursive: true, force: true }) }
   });
@@ -68,6 +68,16 @@ describe("semantic configuration", () => {
       if (previous === undefined) delete process.env.SCAVI_AI_MODEL;
       else process.env.SCAVI_AI_MODEL = previous;
     }
+  });
+
+  it("loads and validates the semantic confidence threshold", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-confidence-config-"));
+    try {
+      await writeFile(path.join(root, "scavi.config.ts"), "export default { checks: { semantic: true, semanticConfidence: 0.8 } };\n", "utf8");
+      await expect(loadConfig(root)).resolves.toMatchObject({ checks: { semantic: true, semanticConfidence: 0.8 } });
+      await writeFile(path.join(root, "scavi.config.ts"), "export default { checks: { semantic: true, semanticConfidence: 1.2 } };\n", "utf8");
+      await expect(loadConfig(root)).rejects.toThrow("between 0 and 1");
+    } finally { await rm(root, { recursive: true, force: true }) }
   });
 });
 
@@ -128,6 +138,24 @@ describe("semantic verification", () => {
       const result = await checkRepository(root, { semanticProvider: provider });
       expect(result.semanticFindings[0]).toMatchObject({ verdict: "stale", confidence: 0.92, provider: "mock" });
       expect(result.issues.map((issue) => issue.id)).toContain("POSSIBLY_STALE");
+      expect(exitCodeFor(result)).toBe(0);
+    } finally { await rm(root, { recursive: true, force: true }) }
+  });
+
+  it("downgrades a low-confidence stale verdict to uncertain", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "scavi-semantic-threshold-"));
+    try {
+      await mkdir(path.join(root, "src"));
+      await writeFile(path.join(root, "AGENTS.md"), "Configuration is persisted in JSON files.\n", "utf8");
+      await writeFile(path.join(root, "src", "storage.ts"), "export function saveConfiguration() { return openSqlite(); }\n", "utf8");
+      await writeFile(path.join(root, "scavi.config.ts"), "export default { checks: { semantic: true, semanticConfidence: 0.8 }, ai: { provider: \"openai\", model: \"test\" } };\n", "utf8");
+      const provider: SemanticProvider = { name: "mock", async verify() {
+        return { verdict: "stale", confidence: 0.7, reason: "The implementation may use SQLite." };
+      } };
+      const result = await checkRepository(root, { semanticProvider: provider });
+      expect(result.semanticFindings[0]).toMatchObject({ verdict: "uncertain", confidence: 0.7 });
+      expect(result.semanticFindings[0]?.reason).toContain("below the configured 80% threshold");
+      expect(result.issues.map((issue) => issue.id)).not.toContain("POSSIBLY_STALE");
       expect(exitCodeFor(result)).toBe(0);
     } finally { await rm(root, { recursive: true, force: true }) }
   });

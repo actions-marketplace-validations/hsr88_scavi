@@ -354,6 +354,7 @@ export default {
   context: ["AGENTS.md", "CLAUDE.md"],
   checks: {
     semantic: true,
+    semanticConfidence: 0.6,
   },
   ai: {
     provider: "openai",
@@ -369,6 +370,8 @@ OPENAI_API_KEY=your-key scavi check
 ```
 
 Scavi uses the OpenAI Responses API with stored responses disabled. Repository content is treated as untrusted data, and only retrieved evidence is included in a request. Deterministic mode does not require a key or make network requests.
+
+`semanticConfidence` controls the minimum confidence required before a provider verdict can become a semantic warning. It defaults to `0.6`; results below the threshold are reported as `uncertain` and never fail CI.
 
 For fully local semantic verification, run Ollama and configure:
 

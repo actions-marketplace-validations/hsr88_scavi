@@ -4,6 +4,7 @@ export default {
   ],
   checks: {
     semantic: false,
+    semanticConfidence: 0.6,
   },
   ai: {
     provider: "openai",

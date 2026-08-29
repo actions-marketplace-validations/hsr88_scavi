@@ -7,7 +7,7 @@ import { collectRepositoryFacts, runDeterministicRules, type RepositoryFacts, ty
 
 export interface SemanticFinding { source: SourceLocation; claim: string; verdict: SemanticVerdict; confidence: number; evidence: RankedEvidence[]; reason: string; provider?: string }
 export interface CheckResult { root: string; contextFiles: ContextFile[]; facts: RepositoryFacts; issues: ScaviIssue[]; semanticFindings: SemanticFinding[]; summary: { errors: number; warnings: number; infos: number; total: number } }
-export interface ScaviConfig { context?: string[]; checks?: { semantic?: boolean }; ai?: { provider?: "openai" | "ollama"; model?: string; baseUrl?: string } }
+export interface ScaviConfig { context?: string[]; checks?: { semantic?: boolean; semanticConfidence?: number }; ai?: { provider?: "openai" | "ollama"; model?: string; baseUrl?: string } }
 export interface CheckOptions { semanticProvider?: SemanticProvider }
 export interface InitResult { root: string; configPath: string; created: boolean; contextFiles: string[]; packageManager?: string }
 
@@ -36,10 +36,13 @@ export async function loadConfig(root: string): Promise<ScaviConfig> {
   const context = contextBlock ? [...contextBlock.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]) : undefined;
   const checksBlock = source.match(/\bchecks\s*:\s*\{([\s\S]*?)\}/)?.[1];
   const semantic = checksBlock?.match(/\bsemantic\s*:\s*(true|false)/)?.[1];
+  const semanticConfidenceText = checksBlock?.match(/\bsemanticConfidence\s*:\s*(\d+(?:\.\d+)?)/)?.[1];
+  const semanticConfidence = semanticConfidenceText === undefined ? undefined : Number(semanticConfidenceText);
+  if (semanticConfidence !== undefined && (semanticConfidence < 0 || semanticConfidence > 1)) throw new Error("checks.semanticConfidence must be between 0 and 1");
   const aiBlock = source.match(/\bai\s*:\s*\{([\s\S]*?)\}/)?.[1];
   const stringValue = (name: string) => aiBlock?.match(new RegExp(`\\b${name}\\s*:\\s*["']([^"']*)["']`))?.[1];
   const provider = stringValue("provider");
-  return { context, checks: semantic ? { semantic: semantic === "true" } : undefined, ai: aiBlock ? { provider: provider === "openai" || provider === "ollama" ? provider : undefined, model: stringValue("model"), baseUrl: stringValue("baseUrl") } : undefined };
+  return { context, checks: semantic || semanticConfidence !== undefined ? { semantic: semantic === "true", semanticConfidence } : undefined, ai: aiBlock ? { provider: provider === "openai" || provider === "ollama" ? provider : undefined, model: stringValue("model"), baseUrl: stringValue("baseUrl") } : undefined };
 }
 
 export async function initRepository(start?: string): Promise<InitResult> {
@@ -51,7 +54,7 @@ export async function initRepository(start?: string): Promise<InitResult> {
   const configPath = path.join(root, "scavi.config.ts");
   const values = (context.length ? context : ["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md", ".cursor/rules/**/*.mdc"])
     .map((item) => `    ${JSON.stringify(item)},`).join("\n");
-  const source = `export default {\n  context: [\n${values}\n  ],\n  checks: {\n    semantic: false,\n  },\n  ai: {\n    provider: "openai",\n    model: "",\n  },\n};\n`;
+  const source = `export default {\n  context: [\n${values}\n  ],\n  checks: {\n    semantic: false,\n    semanticConfidence: 0.6,\n  },\n  ai: {\n    provider: "openai",\n    model: "",\n  },\n};\n`;
   let created = true;
   try { await writeFile(configPath, source, { encoding: "utf8", flag: "wx" }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") created = false; else throw error }
@@ -78,6 +81,7 @@ export async function checkRepository(start?: string, options: CheckOptions = {}
   const semanticFindings: SemanticFinding[] = [];
   if (config.checks?.semantic) {
     const provider = options.semanticProvider ?? configuredProvider(config);
+    const confidenceThreshold = config.checks.semanticConfidence ?? 0.6;
     const chunks = await indexRepository(root, { excludeFiles: contextFiles.map((file) => file.relativePath) });
     for (const claim of parsed.flatMap((context) => context.semanticClaims)) {
       const evidence = retrieveEvidence(claim.text, chunks);
@@ -86,8 +90,12 @@ export async function checkRepository(start?: string, options: CheckOptions = {}
         continue;
       }
       const result = await provider.verify({ claim: claim.text, evidence });
-      semanticFindings.push({ source: claim.source, claim: claim.text, evidence, provider: provider.name, ...result });
-      if (result.verdict === "stale") issues.push({ id: "POSSIBLY_STALE", rule: "semantic-verification", severity: "warning", source: claim.source, message: result.reason, claim: claim.text, confidence: result.confidence, evidence: evidence.map((item) => ({ file: item.file, description: `lines ${item.startLine}-${item.endLine}, retrieval score ${item.score}` })) });
+      const verdict = result.confidence < confidenceThreshold ? "uncertain" : result.verdict;
+      const reason = verdict === "uncertain" && result.verdict !== "uncertain"
+        ? `Provider returned ${result.verdict} at ${Math.round(result.confidence * 100)}%, below the configured ${Math.round(confidenceThreshold * 100)}% threshold. ${result.reason}`
+        : result.reason;
+      semanticFindings.push({ source: claim.source, claim: claim.text, evidence, provider: provider.name, verdict, confidence: result.confidence, reason });
+      if (verdict === "stale") issues.push({ id: "POSSIBLY_STALE", rule: "semantic-verification", severity: "warning", source: claim.source, message: reason, claim: claim.text, confidence: result.confidence, evidence: evidence.map((item) => ({ file: item.file, description: `lines ${item.startLine}-${item.endLine}, retrieval score ${item.score}` })) });
     }
   }
   return {

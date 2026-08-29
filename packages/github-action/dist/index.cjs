@@ -19823,10 +19823,14 @@ async function loadConfig(root) {
   const context = contextBlock ? [...contextBlock.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]) : void 0;
   const checksBlock = source.match(/\bchecks\s*:\s*\{([\s\S]*?)\}/)?.[1];
   const semantic = checksBlock?.match(/\bsemantic\s*:\s*(true|false)/)?.[1];
+  const semanticConfidenceText = checksBlock?.match(/\bsemanticConfidence\s*:\s*(\d+(?:\.\d+)?)/)?.[1];
+  const semanticConfidence = semanticConfidenceText === void 0 ? void 0 : Number(semanticConfidenceText);
+  if (semanticConfidence !== void 0 && (semanticConfidence < 0 || semanticConfidence > 1))
+    throw new Error("checks.semanticConfidence must be between 0 and 1");
   const aiBlock = source.match(/\bai\s*:\s*\{([\s\S]*?)\}/)?.[1];
   const stringValue = (name) => aiBlock?.match(new RegExp(`\\b${name}\\s*:\\s*["']([^"']*)["']`))?.[1];
   const provider = stringValue("provider");
-  return { context, checks: semantic ? { semantic: semantic === "true" } : void 0, ai: aiBlock ? { provider: provider === "openai" || provider === "ollama" ? provider : void 0, model: stringValue("model"), baseUrl: stringValue("baseUrl") } : void 0 };
+  return { context, checks: semantic || semanticConfidence !== void 0 ? { semantic: semantic === "true", semanticConfidence } : void 0, ai: aiBlock ? { provider: provider === "openai" || provider === "ollama" ? provider : void 0, model: stringValue("model"), baseUrl: stringValue("baseUrl") } : void 0 };
 }
 function configuredModel(config) {
   return config.ai?.model || process.env.SCAVI_AI_MODEL || "";
@@ -19851,6 +19855,7 @@ async function checkRepository(start, options = {}) {
   const semanticFindings = [];
   if (config.checks?.semantic) {
     const provider = options.semanticProvider ?? configuredProvider(config);
+    const confidenceThreshold = config.checks.semanticConfidence ?? 0.6;
     const chunks = await indexRepository(root, { excludeFiles: contextFiles.map((file) => file.relativePath) });
     for (const claim of parsed.flatMap((context) => context.semanticClaims)) {
       const evidence = retrieveEvidence(claim.text, chunks);
@@ -19859,9 +19864,11 @@ async function checkRepository(start, options = {}) {
         continue;
       }
       const result = await provider.verify({ claim: claim.text, evidence });
-      semanticFindings.push({ source: claim.source, claim: claim.text, evidence, provider: provider.name, ...result });
-      if (result.verdict === "stale")
-        issues.push({ id: "POSSIBLY_STALE", rule: "semantic-verification", severity: "warning", source: claim.source, message: result.reason, claim: claim.text, confidence: result.confidence, evidence: evidence.map((item) => ({ file: item.file, description: `lines ${item.startLine}-${item.endLine}, retrieval score ${item.score}` })) });
+      const verdict = result.confidence < confidenceThreshold ? "uncertain" : result.verdict;
+      const reason = verdict === "uncertain" && result.verdict !== "uncertain" ? `Provider returned ${result.verdict} at ${Math.round(result.confidence * 100)}%, below the configured ${Math.round(confidenceThreshold * 100)}% threshold. ${result.reason}` : result.reason;
+      semanticFindings.push({ source: claim.source, claim: claim.text, evidence, provider: provider.name, verdict, confidence: result.confidence, reason });
+      if (verdict === "stale")
+        issues.push({ id: "POSSIBLY_STALE", rule: "semantic-verification", severity: "warning", source: claim.source, message: reason, claim: claim.text, confidence: result.confidence, evidence: evidence.map((item) => ({ file: item.file, description: `lines ${item.startLine}-${item.endLine}, retrieval score ${item.score}` })) });
     }
   }
   return {
